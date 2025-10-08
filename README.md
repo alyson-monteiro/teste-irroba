@@ -1,56 +1,108 @@
-# Product Update Hub
+# 🛠️ Laravel Product Hub — AWS SQS Integration
 
-A Laravel-based hub responsible for consuming product update jobs from an Amazon SQS queue. Incoming jobs update downstream systems (stock, price, description, images, tags) asynchronously while enforcing idempotency, monitoring, and robust error handling.
+Este projeto é uma aplicação **Laravel** que atua como um **HUB de integração** entre mensagens recebidas de uma fila **Amazon SQS** e o processamento de atualizações de produtos em um banco de dados local.  
+O objetivo é consumir mensagens, validá-las e aplicar alterações em um catálogo de produtos de forma **assíncrona, idempotente e segura**.
 
-## Features
-- Amazon SQS queue integration with Laravel queue workers.
-- Idempotent processing via unique job enforcement and persistent tracking.
-- Validation for every job payload and update type before any side-effect.
-- Centralised monitoring endpoint exposing processed / failed job metrics.
-- Scheduled pruning of historical job records to keep the hub lean.
-- Automated tests covering job success, failure, idempotency, and service behaviour.
+---
 
-## Getting Started
-1. Copy `.env.example` to `.env` and set the following values:
-   - `APP_KEY` via `php artisan key:generate`.
-   - `QUEUE_CONNECTION=sqs` plus AWS credentials (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`).
-   - `SQS_PREFIX`, `SQS_QUEUE`, and optionally `SQS_WAIT_TIME`.
-   - Downstream API credentials (`PRODUCTS_API_BASE_URL`, `PRODUCTS_API_KEY`).
-   - Monitoring key (`HUB_MONITORING_API_KEY`).
-2. Install dependencies:
-   ```bash
-   composer install
-   npm install
-   ```
-3. Run database migrations:
-   ```bash
-   php artisan migrate
-   ```
-4. Start the queue worker:
-   ```bash
-   php artisan queue:work sqs --tries=3 --backoff=60 --max-time=3600
-   ```
-   For long-lived processing consider `supervisor`, `systemd`, or an AWS ECS task.
+## 🚀 Arquitetura
 
-## Monitoring & Operations
-- Metrics endpoint: `GET /api/monitoring/metrics` (requires `X-Api-Key: <HUB_MONITORING_API_KEY>` header).
-- Logs: structured queue logs (success, failure) emitted via Laravel's logging system.
-- Pruning: `php artisan hub:prune-processed-jobs --days=30` (scheduled daily at 01:00).
+**Fluxo principal:**
 
-## Testing
-Run the automated test suite:
+Amazon SQS → Poller (SqsListen) → Dispatch (Laravel Jobs) → Worker (ProcessProductUpdateJob) → Banco de Dados
+
+
+- **Poller (SqsListen.php)**  
+  Escuta indefinidamente a fila SQS e despacha mensagens recebidas como **Jobs Laravel**.
+
+- **Worker (ProcessProductUpdateJob.php)**  
+  Processa os Jobs de forma assíncrona, validando payloads, atualizando registros de produto e registrando o histórico de execução.
+
+- **Banco de Dados**  
+  - `products`: catálogo de produtos.  
+  - `processed_jobs`: histórico e status de execução de jobs (Pending, Processing, Completed, Failed).
+
+---
+
+## 📂 Estrutura de Arquivos Importantes
+
+- `app/Console/Commands/SqsListen.php` → Poller para SQS.  
+- `app/Jobs/ProcessProductUpdateJob.php` → Worker que processa atualizações.  
+- `app/Models/ProcessedJob.php` → Modelo para registrar status dos jobs.  
+- `database/migrations/*` → Tabelas `products` e `processed_jobs`.  
+- `config/queue.php` → Configurações de fila (SQS + database).  
+
+---
+
+## ⚙️ Configuração
+
+### 1. Clonar o repositório
 ```bash
-php artisan test
+git clone https://github.com/alyson-monteiro/aws-sqs-job-processor.git
 ```
-Tests cover:
-- Successful processing and downstream API calls.
-- Idempotency guarantees and duplicate suppression.
-- Failure handling with stored diagnostics.
-- Monitoring endpoint authentication and payload.
-- Service-level configuration validation.
+### 2. Instalar dependências
+```bash
+npm install
+composer install
+```
+### 3. Configurar .env
+```bash
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=example_app
+DB_USERNAME=root
+DB_PASSWORD=
 
-## Deployment Notes
-- Ensure the queue worker runs continuously (Supervisor, Horizon, ECS, etc.).
-- Configure HTTPS endpoints for the downstream product API.
-- Rotate the monitoring API key regularly and distribute securely.
-- Enable database backups for the `processed_jobs` table for auditability, retaining only what compliance requires.
+AWS_ACCESS_KEY_ID=SEU_KEY
+AWS_SECRET_ACCESS_KEY=SEU_SECRET
+AWS_DEFAULT_REGION=us-east-1
+SQS_PREFIX=https://sqs.us-east-1.amazonaws.com/SEU_ID
+SQS_QUEUE=irroba-product-jobs.fifo
+SQS_SUFFIX=
+```
+4. Criar tabelas
+```bash
+php artisan migrate --seed
+```
+
+▶️ Execução
+Rodar o Poller (escuta SQS): php artisan sqs:listen
+Rodar o Worker (processa jobs internos): php artisan queue:work database --queue=product-updates --tries=1 --backoff=60 --timeout=120 -vvv
+
+📦 Exemplo de Mensagem (AWS CLI)
+```bash
+aws sqs send-message \
+  --queue-url "https://sqs.us-east-1.amazonaws.com/SEU_ID/irroba-product-jobs.fifo" \
+  --message-group-id "product-updates" \
+  --message-deduplication-id "$(uuidgen)" \
+  --message-body '{
+    "message_id": "test-stock-001",
+    "type": "stock",
+    "data": {
+      "sku": "SKU-STARTER-001",
+      "quantity": 99
+    }
+  }'
+```
+✅ Funcionalidades Atuais
+
+Consome mensagens da AWS SQS (Poller).
+
+Enfileira Jobs para processamento interno (Database Queue).
+
+Processa payloads e aplica atualizações em produtos.
+
+Mantém registro de cada execução em processed_jobs.
+
+Idempotência garantida via message_id.
+
+Logs de sucesso e falha.
+
+📌 Requisitos da AWS
+
+Conta AWS (Free-Tier).
+
+Fila SQS criada e configurada.
+
+Credenciais IAM com permissão para SQS.
