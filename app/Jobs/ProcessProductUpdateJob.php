@@ -33,7 +33,7 @@ class ProcessProductUpdateJob implements ShouldQueue, ShouldBeUnique
     /**
      * Permite tentativas de nova execucao antes de falhar o job.
      */
-    public int $tries = 3;
+    public int $tries = 1;
 
     /**
      * Estrategia de backoff em segundos entre as tentativas.
